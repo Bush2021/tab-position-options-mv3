@@ -1,48 +1,16 @@
 {
-   "background": {
-      "persistent": true,
-      "scripts": [ "background.js" ]
-   },
-   "commands": {
-      "myCommandCRNT2ACT": {
-         "description": "Send tab sort command",
-         "suggested_key": {
-            "default": "Alt+C"
-         }
-      },
-      "myCommandSORTTABTITLE": {
-         "description": "Send tab sort command",
-         "suggested_key": {
-            "default": "Alt+T"
-         }
-      },
-      "myCommandSORTTABURL": {
-         "description": "Send tab sort command",
-         "suggested_key": {
-            "default": "Alt+U"
-         }
-      }
-   },
-   "content_scripts": [ {
-      "all_frames": true,
-      "js": [ "contentscript.js" ],
-      "matches": [ "*://*/*" ],
-      "run_at": "document_start"
-   } ],
-   "content_security_policy": "script-src 'self'; object-src 'self'",
-   "description": "Tab Position Options",
-   "icons": {
-      "128": "icon128.png",
-      "16": "icon16.png",
-      "32": "icon32.png",
-      "48": "icon48.png"
-   },
-   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6K8il7SBit9L00Az2iJseXdbMYNE65jss10vjIVeXg9qWisbCx86S1GLzJ+M+lPdqbFAcWxf1Yg0Tb7hj+ShZwWhrgu/yAiuNXdZHeO9IwX1YGMYAzNqu5F5DVzGFikxj2B6AxSRgtn6dUlhYVU3tMLKOZ4OLYQOmePhKLKggy+9k3/7cUHtWimyqyuTNKcpdGoqR+Ugz0PPvkFg/82tkFQumkeTASyzf8vRKAZ4lC3gP3WYtvBfv8L/Fv515a7hy5b99mbJME25V79tam6YFdbnpYWG9RVs7L7mGUgasJQSrgf2e8CYc1QE0Si4IQ1rEYpk5GoAPe0d/Xhx2yxzDQIDAQAB",
-   "manifest_version": 2,
-   "minimum_chrome_version": "22",
-   "name": "Tab Position Options",
-   "options_page": "options.html",
-   "permissions": [ "tabs", "storage", "webNavigation" ],
-   "update_url": "https://clients2.google.com/service/update2/crx",
-   "version": "5.6"
-}
+    "manifest_version": 3,
+    "name": "Return to Left Tab",
+    "version": "1.0",
+    "description": "Tab Position Options",
+    "permissions": ["tabs"],
+    "background": {
+      "service_worker": "background.js"
+    },
+    "icons": {
+       "128": "icon128.png",
+       "16": "icon16.png",
+       "32": "icon32.png",
+       "48": "icon48.png"
+    }
+  }
