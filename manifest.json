@@ -3,9 +3,17 @@
     "name": "Return to Left Tab",
     "version": "1.0",
     "description": "Tab Position Options",
-    "permissions": ["tabs"],
+    "permissions": [
+        "tabs",
+        "scripting"
+    ],
+    "host_permissions": [
+        "http://*/*",
+        "https://*/*"
+    ],
     "background": {
-      "service_worker": "background.js"
+      "service_worker": "background.js",
+      "type": "module"
     },
     "icons": {
        "128": "icon128.png",
@@ -13,4 +21,4 @@
        "32": "icon32.png",
        "48": "icon48.png"
     }
-  }
+}
