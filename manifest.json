@@ -3,7 +3,7 @@
     "name": "Return to Left Tab",
     "version": "1.0",
     "description": "Tab Position Options",
-    "permissions": ["tabs", "offscreen"],
+    "permissions": ["tabs"],
     "background": {
       "service_worker": "background.js"
     },

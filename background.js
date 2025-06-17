@@ -1,15 +1,5 @@
 let lastActiveTab = null
 
-async function createOffscreen() {
-  await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
-    reasons: ['BLOBS'],
-    justification: 'keep service worker running',
-  }).catch(() => {});
-}
-chrome.runtime.onStartup.addListener(createOffscreen);
-self.onmessage = e => {}; // keepAlive
-createOffscreen();
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
     chrome.tabs.get(activeInfo.tabId, (tab) => {
