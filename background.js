@@ -1,7 +1,7 @@
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
     try {
         const tab = await chrome.tabs.get(activeInfo.tabId);
-        await chrome.storage.local.set({
+        await chrome.storage.session.set({
             lastActiveTab: {
                 id: tab.id,
                 index: tab.index,
@@ -14,7 +14,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-    const data = await chrome.storage.local.get('lastActiveTab');
+    const data = await chrome.storage.session.get('lastActiveTab');
     const lastActiveTab = data.lastActiveTab;
 
     if (!lastActiveTab || removeInfo.windowId !== lastActiveTab.windowId) {
@@ -25,7 +25,7 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
         try {
             const tabs = await chrome.tabs.query({ windowId: removeInfo.windowId });
             if (tabs.length === 0) {
-                await chrome.storage.local.remove('lastActiveTab');
+                await chrome.storage.session.remove('lastActiveTab');
                 return;
             }
 
@@ -51,12 +51,12 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
 
 chrome.tabs.onMoved.addListener(async (tabId, moveInfo) => {
     try {
-        const data = await chrome.storage.local.get('lastActiveTab');
+        const data = await chrome.storage.session.get('lastActiveTab');
         const lastActiveTab = data.lastActiveTab;
 
         if (lastActiveTab && lastActiveTab.windowId === moveInfo.windowId) {
             const updatedTab = await chrome.tabs.get(lastActiveTab.id);
-            await chrome.storage.local.set({ 
+            await chrome.storage.session.set({ 
                 lastActiveTab: {
                     id: updatedTab.id,
                     index: updatedTab.index,
