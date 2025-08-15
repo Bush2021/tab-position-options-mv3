@@ -1,70 +1,91 @@
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
+const STORAGE_KEY = 'activeTabsByWindow';
+
+async function updateStoredActiveTab(windowId) {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+        return;
+    }
     try {
-        const tab = await chrome.tabs.get(activeInfo.tabId);
-        await chrome.storage.session.set({
-            lastActiveTab: {
-                id: tab.id,
-                index: tab.index,
-                windowId: tab.windowId
-            }
-        });
+        const [activeTab] = await chrome.tabs.query({ active: true, windowId: windowId });
+        if (!activeTab) return;
+
+        const data = await chrome.storage.session.get(STORAGE_KEY);
+        const allWindowsState = data[STORAGE_KEY] || {};
+
+        allWindowsState[windowId] = {
+            id: activeTab.id,
+            index: activeTab.index,
+            windowId: activeTab.windowId
+        };
+
+        await chrome.storage.session.set({ [STORAGE_KEY]: allWindowsState });
     } catch (e) {
-        console.debug('Failed to get activated tab:', e.message);
+        console.debug('Failed to update stored active tab:', e.message);
+    }
+}
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+    updateStoredActiveTab(activeInfo.windowId);
+});
+
+chrome.tabs.onMoved.addListener((_tabId, moveInfo) => {
+    updateStoredActiveTab(moveInfo.windowId);
+});
+
+chrome.tabs.onAttached.addListener((_tabId, attachInfo) => {
+    updateStoredActiveTab(attachInfo.newWindowId);
+});
+
+chrome.tabs.onDetached.addListener((_tabId, detachInfo) => {
+    updateStoredActiveTab(detachInfo.oldWindowId);
+});
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+    updateStoredActiveTab(windowId);
+});
+
+chrome.windows.onRemoved.addListener(async (windowId) => {
+    try {
+        const data = await chrome.storage.session.get(STORAGE_KEY);
+        const allWindowsState = data[STORAGE_KEY] || {};
+        if (allWindowsState[windowId]) {
+            delete allWindowsState[windowId];
+            await chrome.storage.session.set({ [STORAGE_KEY]: allWindowsState });
+        }
+    } catch (e) {
+        console.debug('Failed to clean up window state:', e.message);
     }
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-    const data = await chrome.storage.session.get('lastActiveTab');
-    const lastActiveTab = data.lastActiveTab;
+    if (removeInfo.isWindowClosing) return;
 
-    if (!lastActiveTab || removeInfo.windowId !== lastActiveTab.windowId) {
-        return;
-    }
-
-    if (tabId === lastActiveTab.id) {
-        try {
-            const tabs = await chrome.tabs.query({ windowId: removeInfo.windowId });
-            if (tabs.length === 0) {
-                await chrome.storage.session.remove('lastActiveTab');
-                return;
-            }
-
-            const targetIndex = Math.max(0, lastActiveTab.index - 1);
-            let targetTab = tabs.find(tab => tab.index === targetIndex);
-            
-            if (!targetTab) {
-                targetTab = tabs.find(tab => tab.index === lastActiveTab.index);
-            }
-
-            if (!targetTab && tabs.length > 0) {
-                targetTab = tabs[0];
-            }
-
-            if (targetTab) {
-                await chrome.tabs.update(targetTab.id, { active: true });
-            }
-        } catch (e) {
-            console.debug('Failed to activate tab after removal:', e.message);
-        }
-    }
-});
-
-chrome.tabs.onMoved.addListener(async (tabId, moveInfo) => {
     try {
-        const data = await chrome.storage.session.get('lastActiveTab');
-        const lastActiveTab = data.lastActiveTab;
+        const data = await chrome.storage.session.get(STORAGE_KEY);
+        const allWindowsState = data[STORAGE_KEY] || {};
 
-        if (lastActiveTab && lastActiveTab.windowId === moveInfo.windowId && tabId === lastActiveTab.id) {
-            const updatedTab = await chrome.tabs.get(lastActiveTab.id);
-            await chrome.storage.session.set({ 
-                lastActiveTab: {
-                    id: updatedTab.id,
-                    index: updatedTab.index,
-                    windowId: updatedTab.windowId
-                }
-            });
+        const lastActiveTab = allWindowsState[removeInfo.windowId];
+
+        if (!lastActiveTab || tabId !== lastActiveTab.id) {
+            return;
+        }
+    
+        const tabs = await chrome.tabs.query({ windowId: removeInfo.windowId });
+        if (tabs.length === 0) return;
+        
+        const targetIndex = Math.max(0, lastActiveTab.index - 1);
+        let targetTab = tabs.find(tab => tab.index === targetIndex);
+        
+        if (!targetTab) {
+            targetTab = tabs.find(tab => tab.index === lastActiveTab.index);
+        }
+        if (!targetTab) {
+            targetTab = tabs[0];
+        }
+
+        if (targetTab) {
+            await chrome.tabs.update(targetTab.id, { active: true });
         }
     } catch (e) {
-        console.debug('Failed to update tab index after move:', e.message);
+        console.debug('Failed to activate tab after removal:', e.message);
     }
 });
