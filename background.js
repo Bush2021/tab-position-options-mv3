@@ -54,7 +54,7 @@ chrome.tabs.onMoved.addListener(async (tabId, moveInfo) => {
         const data = await chrome.storage.session.get('lastActiveTab');
         const lastActiveTab = data.lastActiveTab;
 
-        if (lastActiveTab && lastActiveTab.windowId === moveInfo.windowId) {
+        if (lastActiveTab && lastActiveTab.windowId === moveInfo.windowId && tabId === lastActiveTab.id) {
             const updatedTab = await chrome.tabs.get(lastActiveTab.id);
             await chrome.storage.session.set({ 
                 lastActiveTab: {
