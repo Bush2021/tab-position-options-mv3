@@ -1,6 +1,11 @@
 const STORAGE_KEY = 'activeTabsByWindow';
 const DEBUG_MODE = false;
 
+// Stores the activation delay timer IDs for each window.
+// In the MV3 Service Worker environment, global variables may be reset when the Service Worker goes idle;
+// however, this is the desired behavior, as an SW restart guarantees that any prior timers are invalidated, preventing side effects.
+let activationDelayTimers = {}; 
+
 function debugLog(message, data = null) {
     if (DEBUG_MODE) {
         console.log(`[TabPositionOptions] ${message}`, data || '');
@@ -9,7 +14,6 @@ function debugLog(message, data = null) {
 
 async function updateStoredActiveTab(windowId) {
     if (windowId === chrome.windows.WINDOW_ID_NONE) {
-        debugLog('Skipping update for WINDOW_ID_NONE');
         return;
     }
     
@@ -20,7 +24,6 @@ async function updateStoredActiveTab(windowId) {
         });
         
         if (!activeTab) {
-            debugLog(`No active tab found for window ${windowId}`);
             return;
         }
 
@@ -44,34 +47,45 @@ async function updateStoredActiveTab(windowId) {
 }
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
-    debugLog(`Tab activated: ${activeInfo.tabId} in window ${activeInfo.windowId}`);
-    updateStoredActiveTab(activeInfo.windowId);
+    const windowId = activeInfo.windowId;
+    debugLog(`Tab activated: ${activeInfo.tabId} (Queueing delayed update)`);
+
+    // If there are already pending updates for this window, cancel them 
+    // (to prevent quick switching from causing an overwrite error)
+    if (activationDelayTimers[windowId]) {
+        clearTimeout(activationDelayTimers[windowId]);
+    }
+
+    // Set a 150ms delay.
+    // If this activation is triggered by a "tab close", onRemoved will fire within these 150ms,
+    // at which point the Storage still holds the "closed tab" as LastActive,
+    // allowing the logic in onRemoved to succeed.
+    activationDelayTimers[windowId] = setTimeout(() => {
+        updateStoredActiveTab(windowId);
+        delete activationDelayTimers[windowId];
+    }, 150);
 });
 
 chrome.tabs.onMoved.addListener((tabId, moveInfo) => {
-    debugLog(`Tab ${tabId} moved in window ${moveInfo.windowId}`);
     updateStoredActiveTab(moveInfo.windowId);
 });
 
 chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
-    debugLog(`Tab ${tabId} attached to window ${attachInfo.newWindowId}`);
     updateStoredActiveTab(attachInfo.newWindowId);
 });
 
 chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
-    debugLog(`Tab ${tabId} detached from window ${detachInfo.oldWindowId}`);
     updateStoredActiveTab(detachInfo.oldWindowId);
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
     if (windowId !== chrome.windows.WINDOW_ID_NONE) {
-        debugLog(`Window focus changed to ${windowId}`);
+        // Window focus change does not need delay, update directly
         updateStoredActiveTab(windowId);
     }
 });
 
 chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
-    debugLog(`Tab replaced: ${removedTabId} -> ${addedTabId}`);
     chrome.tabs.get(addedTabId).then(tab => {
         updateStoredActiveTab(tab.windowId);
     }).catch(e => {
@@ -81,12 +95,17 @@ chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (tab.active && changeInfo.pinned !== undefined) {
-        debugLog(`Active tab ${tabId} updated in window ${tab.windowId}`, changeInfo);
         updateStoredActiveTab(tab.windowId);
     }
 });
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
+    // When a window is closed, clear any pending timers
+    if (activationDelayTimers[windowId]) {
+        clearTimeout(activationDelayTimers[windowId]);
+        delete activationDelayTimers[windowId];
+    }
+
     try {
         const data = await chrome.storage.session.get(STORAGE_KEY);
         const allWindowsState = data[STORAGE_KEY] || {};
@@ -103,7 +122,6 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 
 chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     if (removeInfo.isWindowClosing) {
-        debugLog(`Window ${removeInfo.windowId} is closing, skipping tab removal handling`);
         return;
     }
 
@@ -112,30 +130,34 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
         const allWindowsState = data[STORAGE_KEY] || {};
         const lastActiveTab = allWindowsState[removeInfo.windowId];
 
+        // This is the core logic: if tabId == lastActiveTab.id, it means the user just closed the "currently active tab".
+        // Because onActivated is delayed by 150ms, the data in storage hasn't changed yet,
+        // so this should successfully match.
         if (!lastActiveTab || tabId !== lastActiveTab.id) {
-            debugLog(`Tab ${tabId} was not the last active tab or no stored state found`);
+            debugLog(`Tab ${tabId} was not the last active tab (or storage updated too fast)`);
             return;
         }
     
         const tabs = await chrome.tabs.query({ windowId: removeInfo.windowId });
         if (tabs.length === 0) {
-            debugLog(`No tabs remaining in window ${removeInfo.windowId}`);
             return;
         }
 
         tabs.sort((a, b) => a.index - b.index);
         
-        // Find the rightmost tab to the left of the closed tab
+        // Find the target tab: prefer the one to the left (index less than lastActiveTab.index)
         let targetTab = null;
         const leftTabs = tabs.filter(tab => tab.index < lastActiveTab.index);
+        
         if (leftTabs.length > 0) {
-            targetTab = leftTabs[leftTabs.length - 1];
+            targetTab = leftTabs[leftTabs.length - 1]; // The closest one on the left
             debugLog(`Found tab to the left at index ${targetTab.index}`);
         } else {
-            targetTab = tabs[0]; // Fallback to leftmost tab
+            targetTab = tabs[0]; // If no tabs to the left, fall back to the leftmost tab (or you can change to the rightmost, based on preference)
             debugLog(`No tab to the left found, selecting leftmost tab at index ${targetTab.index}`);
         }
 
+        // Only switch if the tab automatically selected by Chrome (usually the one on the right) is not the one we want
         if (targetTab && !targetTab.active) {
             debugLog(`Activating target tab ${targetTab.id} at index ${targetTab.index}`);
             await chrome.tabs.update(targetTab.id, { active: true });
@@ -164,14 +186,17 @@ async function cleanupStaleData() {
         const validWindowIds = new Set(allWindows.map(w => w.id.toString()));
         
         let hasChanges = false;
+        // Clean up data for windows that no longer exist
         for (const windowId in allWindowsState) {
             if (!validWindowIds.has(windowId)) {
                 delete allWindowsState[windowId];
                 hasChanges = true;
-                debugLog(`Removed stale data for window ${windowId}`);
             }
         }
         
+        // Also clean up any potential zombie timer IDs (although memory is reset, just to keep logic tidy)
+        activationDelayTimers = {};
+
         if (hasChanges) {
             await chrome.storage.session.set({ [STORAGE_KEY]: allWindowsState });
         }
