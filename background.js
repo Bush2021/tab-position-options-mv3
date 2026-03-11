@@ -3,6 +3,7 @@ let isCacheInitialized = false;
 let cacheInitPromise = null;
 let persistQueue = Promise.resolve();
 const windowQueues = new Map();
+const windowActiveHistory = new Map();
 
 function flattenTab(tab) {
   return {
@@ -49,6 +50,8 @@ function removeWindowFromCache(windowId) {
       tabsCache.delete(id);
     }
   }
+
+  windowActiveHistory.delete(windowId);
 }
 
 function markActiveTab(windowId, activeTabId) {
@@ -57,6 +60,32 @@ function markActiveTab(windowId, activeTabId) {
       tab.active = tab.id === activeTabId;
     }
   }
+}
+
+function rememberActivation(windowId, tabId) {
+  if (!isNormalWindowId(windowId) || tabId === undefined || tabId === null) {
+    return;
+  }
+
+  const previous = windowActiveHistory.get(windowId);
+  windowActiveHistory.set(windowId, {
+    current: tabId,
+    previous: previous?.current ?? null,
+    ts: Date.now()
+  });
+}
+
+function wasRecentlyActiveTab(windowId, tabId) {
+  const state = windowActiveHistory.get(windowId);
+  if (!state) {
+    return false;
+  }
+
+  if (state.current === tabId) {
+    return true;
+  }
+
+  return state.previous === tabId && Date.now() - state.ts <= 1500;
 }
 
 function upsertTabInCache(tab) {
@@ -87,13 +116,22 @@ async function refreshWindowTabs(windowId) {
   tabs.forEach((tab) => {
     upsertTabInCache(tab);
   });
+
+  const activeTab = tabs.find((tab) => tab.active);
+  if (activeTab) {
+    rememberActivation(windowId, activeTab.id);
+  }
 }
 
 async function syncAllTabs() {
   const tabs = await chrome.tabs.query({});
   tabsCache.clear();
+  windowActiveHistory.clear();
   tabs.forEach((tab) => {
     tabsCache.set(tab.id, flattenTab(tab));
+    if (tab.active) {
+      rememberActivation(tab.windowId, tab.id);
+    }
   });
   isCacheInitialized = true;
   await persistCache();
@@ -114,6 +152,12 @@ async function initializeCache() {
       const storage = await chrome.storage.session.get("tabsCache");
       if (Array.isArray(storage.tabsCache) && storage.tabsCache.length > 0) {
         tabsCache = new Map(storage.tabsCache);
+        windowActiveHistory.clear();
+        for (const tab of tabsCache.values()) {
+          if (tab.active) {
+            rememberActivation(tab.windowId, tab.id);
+          }
+        }
         isCacheInitialized = true;
       } else {
         await syncAllTabs();
@@ -176,6 +220,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
   runWindowTask(activeInfo.windowId, async () => {
+    rememberActivation(activeInfo.windowId, activeInfo.tabId);
     markActiveTab(activeInfo.windowId, activeInfo.tabId);
     await persistCache();
   });
@@ -216,6 +261,9 @@ chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   runWindowTask(removeInfo.windowId, async () => {
     const closedTab = tabsCache.get(tabId);
+    const closedByHistory = wasRecentlyActiveTab(removeInfo.windowId, tabId);
+    const wasActive = Boolean(closedTab?.active) || closedByHistory;
+
     tabsCache.delete(tabId);
 
     if (removeInfo.isWindowClosing) {
@@ -224,7 +272,7 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
       return;
     }
 
-    if (!closedTab || !closedTab.active) {
+    if (!closedTab || !wasActive) {
       await refreshWindowTabs(removeInfo.windowId);
       await persistCache();
       return;
